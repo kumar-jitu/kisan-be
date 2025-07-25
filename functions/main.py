@@ -1,5 +1,7 @@
 # main.py
-from fastapi import FastAPI, Form, Response
+from typing import Optional
+import httpx
+from fastapi import FastAPI, Form, Response, HTTPException, Query, Header
 from twilio.twiml.messaging_response import MessagingResponse
 from firebase_functions import https_fn
 import uvicorn # For local testing
@@ -65,6 +67,58 @@ def handle_sms(From: str = Form(...), Body: str = Form(...)):
 
     # Return the TwiML response as XML
     return Response(content=str(twiml_response), media_type="application/xml")
+
+
+@app.get("/get-mandi-data")
+async def get_agricultural_data(
+        api_key: str = Query(..., alias="api-key"),
+        format: str = Query(default="json"),
+        limit: int = Query(default=100),
+        state_keyword: Optional[str] = Query(default=None, alias="state"),
+        district: Optional[str] = Query(default=None),
+        commodity: Optional[str] = Query(default=None),
+        accept: str = Header(default="application/json")
+):
+    """
+    Fetch data from data.gov.in API
+    Equivalent to: curl --location --globoff 'https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070?api-key=ABC&format=json&limit=100&filters[state.keyword]=Karnataka&filters[district]=Bangalore&filters[commodity]=null' --header 'accept: application/xml'
+    """
+
+    # API endpoint
+    url = "https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070"
+
+    # Build query parameters
+    params = {
+        "api-key": api_key,
+        "format": format,
+        "limit": limit
+    }
+
+    # Add filters
+    if state_keyword:
+        params["filters[state.keyword]"] = state_keyword
+    if district:
+        params["filters[district]"] = district
+    if commodity:
+        params["filters[commodity]"] = commodity
+
+    # Headers
+    headers = {"accept": accept}
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, params=params, headers=headers, timeout=30.0)
+            response.raise_for_status()
+
+            # Return JSON response if possible, otherwise return text
+            try:
+                return response.json()
+            except:
+                return {"content": response.text}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # This is the entry point for Firebase Functions
 @https_fn.on_request()

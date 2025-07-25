@@ -6,3 +6,4 @@ uvicorn
 twilio
 python-multipart
 requests
+firebase-functions
