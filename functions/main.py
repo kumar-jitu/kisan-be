@@ -656,10 +656,141 @@ async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "service": "agricultural-api"}
 
-@app.get("/")
-async def root():
-    """Root endpoint."""
-    return {"message": "Agricultural API with SMS and Crop Analysis", "version": "1.0.0"}
+@app.post("/getmarketprice")
+async def predict_crop_price(
+        crop_name: str = Form(...),
+        state: str = Form(...),
+        district: str = Form(...)
+):
+    """
+    Predict crop prices using Gemini 2.0 Flash model.
+    Accepts crop_name, state, and district as form parameters.
+    """
+    try:
+        logger.info(f"Starting crop price prediction for {crop_name} in {district}, {state}")
+
+        # Prepare the request for Gemini 2.0 Flash API
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": GEMINI_API_KEY
+        }
+
+        # Construct the user prompt with the provided parameters
+        user_prompt = f"""Crop Price Request - JSON Response Only
+
+Instructions: Provide 7-day price prediction in JSON format ONLY for {crop_name} in {district}, {state}. Include today's vs yesterday's price comparison with percentage difference.
+
+Input:
+Crop: {crop_name}
+District: {district}
+State: {state}
+
+Required JSON Response Must Include:
+- Today's current mandi price 
+- Yesterday's price
+- Price change amount (₹Z)
+- Percentage change: ((Today's Price - Yesterday's Price) / Yesterday's Price) × 100
+- 7-day daily price forecast with specific dates starting from 2025-07-27
+- Single recommendation (sell/wait/monitor)
+- One key factor affecting price
+- Data source used
+
+IMPORTANT:
+- Respond ONLY with valid JSON format
+- No explanatory text before or after JSON
+- Use actual price values, not placeholders
+- Include thought process and data sources within JSON structure
+- Focus only on {district}, {state} mandi data."""
+
+        payload = {
+            "systemInstruction": {
+                "parts": [
+                    {
+                        "text": """Primary Objective: You are a crop price analyst. Provide ONLY JSON format responses with actual price data for specified crops in specific locations. NO explanatory text outside JSON.
+
+Core Task:
+When user provides crop name, state, and district:
+1. Search web for recent mandi price data for that specific location (last 180 days minimum)
+2. Find today's current price and yesterday's price for comparison
+3. Calculate percentage difference: ((Today's Price - Yesterday's Price) / Yesterday's Price) × 100
+4. Analyze short-term trends based on historical data
+5. Predict prices for next 7 days with specific dates
+6. Provide ONE selling recommendation
+
+Response Requirements:
+- ONLY valid JSON format response
+- Focus on specific state and district data
+- Include today's price vs yesterday's comparison with percentage
+- Include 7-day forecast with actual dates
+- No text before or after JSON
+- Include data sources
+
+JSON Response Format:{"current_price":"<current_price>","yesterday_changes":"<yesterday_changes>","changes":"up/down","one_day_later_price":"<one_day_later_price>","two_day_later_price":"<two_day_later_price>","three_day_later_price":"<three_day_later_price>","four_day_later_price":"<four_day_later_price>","five_day_later_price":"<five_day_later_price>"}"""
+                    }
+                ]
+            },
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "text": user_prompt
+                        }
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.1,
+                "topK": 1,
+                "topP": 0.8,
+                "maxOutputTokens": 2048,
+                "candidateCount": 1
+            }
+        }
+
+        # Call Gemini 2.0 Flash API
+        response = requests.post(GEMINI_API_URL, headers=headers, json=payload)
+        response.raise_for_status()
+
+        # Parse the response
+        gemini_response = response.json()
+        response_text = gemini_response["candidates"][0]["content"]["parts"][0]["text"].strip()
+        logger.info(f"Raw price prediction response: {response_text}")
+
+        # Extract JSON from response
+        try:
+            # Find JSON in the response
+            start_idx = response_text.find('{')
+            end_idx = response_text.rfind('}') + 1
+
+            if start_idx != -1 and end_idx != 0:
+                json_str = response_text[start_idx:end_idx]
+                result = json.loads(json_str)
+
+                logger.info(f"Price prediction completed successfully for {crop_name}")
+                return result
+            else:
+                raise ValueError("No JSON found in response")
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON response: {e}")
+            logger.error(f"Raw response: {response_text}")
+
+            # Return fallback response
+            return {
+                "error": "Failed to parse price prediction",
+                "crop": crop_name,
+                "location": f"{district}, {state}",
+                "message": "Unable to get current price data. Please try again.",
+                "raw_response": response_text[:500]  # First 500 chars for debugging
+            }
+
+    except requests.RequestException as e:
+        logger.error(f"Error calling Gemini API: {e}")
+        raise HTTPException(status_code=500, detail=f"API call failed: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error in crop price prediction: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # This is the entry point for Firebase Functions
