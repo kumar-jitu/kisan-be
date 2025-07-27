@@ -17,6 +17,9 @@ from firebase_functions import https_fn
 import uvicorn # For local testing
 import requests
 
+# Import credentials configuration
+from env_config import GEMINI_API_KEY
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,9 +27,17 @@ logger = logging.getLogger(__name__)
 # Initialize FastAPI app
 app = FastAPI()
 
-GEMINI_API_KEY = "AIzaSyBT-GVRbWLF8Jg3GqlbxA4MI3Z7RAyxzFA"  # Replace with your actual API key
+# API URLs
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent"
 GEMINI_TTS_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent"
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize credentials and validate API key on startup."""
+    global GEMINI_API_KEY
+    if GEMINI_API_KEY is None:
+        logger.error("Failed to load Gemini API key. Application may not function properly.")
+        raise RuntimeError("Gemini API key not available")
 
 # Pydantic models for crop analysis
 class CropAnalysisRequest(BaseModel):
