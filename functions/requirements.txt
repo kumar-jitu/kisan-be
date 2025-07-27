@@ -6,3 +6,4 @@ twilio
 python-multipart
 requests
 firebase-functions
+httpx
